@@ -590,6 +590,44 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
         </div>
       )}
 
+      {/* Taper direction visual indicator */}
+      {isEditing === 'taper' && taperDirectionRef.current && selectionBounds && canvasRef.current && (() => {
+        const canvasRect = canvasRef.current!.getBoundingClientRect();
+        const centerX = selectionBounds.x + selectionBounds.width / 2;
+        const centerY = selectionBounds.y + selectionBounds.height / 2;
+        const td = taperDirectionRef.current!;
+        const rad = td.angle * Math.PI / 180;
+        const lineLen = Math.min(td.force * 0.8, Math.max(selectionBounds.width, selectionBounds.height));
+        const endX = centerX + Math.cos(rad) * lineLen;
+        const endY = centerY + Math.sin(rad) * lineLen;
+        // Perpendicular direction for trapezoid shape indicator
+        const perpRad = rad + Math.PI / 2;
+        const halfW = selectionBounds.width / 2;
+        const halfH = selectionBounds.height / 2;
+        const expansion = Math.min(1, td.force / 100);
+        // Wide side (toward finger)
+        const wideHalf = Math.max(halfW, halfH) * (1 + expansion * 0.5);
+        // Narrow side (opposite)
+        const narrowHalf = Math.max(halfW, halfH) * (1 - expansion * 0.3);
+        return (
+          <svg className="absolute inset-0 pointer-events-none z-20" width={canvasWidth} height={canvasHeight}>
+            {/* Direction line from center to finger */}
+            <line
+              x1={centerX} y1={centerY} x2={endX} y2={endY}
+              stroke="hsl(280, 70%, 55%)" strokeWidth="2" strokeDasharray="4 3" opacity="0.8"
+            />
+            {/* Center dot */}
+            <circle cx={centerX} cy={centerY} r="4" fill="hsl(280, 70%, 55%)" opacity="0.9" />
+            {/* Arrow tip */}
+            <circle cx={endX} cy={endY} r="3" fill="hsl(50, 90%, 50%)" opacity="0.9" />
+            {/* Force label */}
+            <text x={endX + 10} y={endY - 10} fill="white" fontSize="11" fontFamily="monospace" opacity="0.8">
+              st: {td.angle}° f={td.force}
+            </text>
+          </svg>
+        );
+      })()}
+
       {hoveredCell !== null && !isEditing && (
         <div className="absolute bottom-2 right-2 bg-card/90 backdrop-blur px-2 py-1 rounded text-xs font-mono text-primary pointer-events-none">
           [{hoveredCell}] → ({hoveredCell % gridWidth}, {Math.floor(hoveredCell / gridWidth)})
