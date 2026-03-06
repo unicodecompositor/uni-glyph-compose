@@ -372,6 +372,7 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
     setIsLongPressActive(false);
     initialAngleRef.current = null;
     rotationCenterRef.current = null;
+    taperDirectionRef.current = null;
     document.body.classList.remove('dragging-active');
   }, [isEditing, spec, onUpdateCode]);
 
