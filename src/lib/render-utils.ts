@@ -31,8 +31,10 @@ export function applyParallelogram(
 }
 
 /**
- * Draw with trapezoid (st) distortion using strip approximation.
- * angle = direction of taper, force = intensity of narrowing
+ * Draw with isosceles trapezoid (st) distortion in any direction.
+ * angle = expansion direction, force = intensity.
+ *
+ * The symbol itself is not rotated — only the distortion field direction changes.
  */
 export function drawTrapezoidal(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -40,65 +42,49 @@ export function drawTrapezoidal(
   x: number, y: number, w: number, h: number,
   st: { angle: number; force: number },
 ) {
-  const force = st.force * 0.001;
-  if (Math.abs(force) < 0.0001) {
+  const sourceW = source.width;
+  const sourceH = source.height;
+  if (!sourceW || !sourceH || w <= 0 || h <= 0) return;
+
+  // 0..200 (editor) -> 0..2 distortion range
+  const intensity = Math.max(-2, Math.min(2, st.force / 100));
+  if (Math.abs(intensity) < 0.001) {
     ctx.drawImage(source, x, y, w, h);
     return;
   }
 
   const rad = st.angle * Math.PI / 180;
-  const dirX = Math.cos(rad);
-  const dirY = Math.sin(rad);
-  // perpendicular vector
-  const perpX = -dirY;
-  const perpY = dirX;
+  const steps = Math.max(32, Math.round(Math.max(w, h) / 2));
 
-  const steps = Math.max(24, Math.round(Math.max(w, h) / 3));
-  const centerX = x + w / 2;
-  const centerY = y + h / 2;
+  // Work in local space centered on the symbol.
+  // X axis points to expansion direction, Y axis is the "width" to stretch/compress.
+  const cx = x + w / 2;
+  const cy = y + h / 2;
 
   ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rad);
 
-  // Determine if we slice horizontally or vertically based on dominant axis
-  if (Math.abs(dirY) >= Math.abs(dirX)) {
-    // Taper along Y: slice horizontally, each row width varies
-    for (let i = 0; i < steps; i++) {
-      const t = i / steps;
-      const t2 = (i + 1) / steps;
-      const rowCenterY = y + (t + t2) / 2 * h;
-      const relY = rowCenterY - centerY;
-      // How far along the taper direction
-      const distAlong = relY * dirY / (h / 2);
-      const spread = 1 + distAlong * force * h;
-      const rowW = w * Math.max(0.01, spread);
-      const rowX = centerX - rowW / 2;
-      const sy = t * source.height;
-      const sh = (t2 - t) * source.height;
-      const dy = y + t * h;
-      const dh = (t2 - t) * h;
-      if (sh > 0 && dh > 0) {
-        ctx.drawImage(source, 0, sy, source.width, sh, rowX, dy, rowW, dh);
-      }
-    }
-  } else {
-    // Taper along X: slice vertically, each column height varies
-    for (let i = 0; i < steps; i++) {
-      const t = i / steps;
-      const t2 = (i + 1) / steps;
-      const colCenterX = x + (t + t2) / 2 * w;
-      const relX = colCenterX - centerX;
-      const distAlong = relX * dirX / (w / 2);
-      const spread = 1 + distAlong * force * w;
-      const colH = h * Math.max(0.01, spread);
-      const colY = centerY - colH / 2;
-      const sx = t * source.width;
-      const sw = (t2 - t) * source.width;
-      const dx = x + t * w;
-      const dw = (t2 - t) * w;
-      if (sw > 0 && dw > 0) {
-        ctx.drawImage(source, sx, 0, sw, source.height, dx, colY, dw, colH);
-      }
-    }
+  for (let i = 0; i < steps; i++) {
+    const t0 = i / steps;
+    const t1 = (i + 1) / steps;
+
+    const stripX = -w / 2 + t0 * w;
+    const stripW = (t1 - t0) * w;
+    const sx = t0 * sourceW;
+    const sw = (t1 - t0) * sourceW;
+
+    if (sw <= 0 || stripW <= 0) continue;
+
+    // -1..1 along expansion axis: opposite side narrows, finger side expands
+    const centerNorm = (stripX + stripW / 2) / (w / 2);
+    const spread = 1 + centerNorm * intensity;
+    const stripH = h * Math.max(0.02, spread);
+    const stripY = -stripH / 2;
+
+    // Tiny overlap prevents visible seams between strips
+    const drawW = stripW + 0.5;
+    ctx.drawImage(source, sx, 0, sw, sourceH, stripX, stripY, drawW, stripH);
   }
 
   ctx.restore();
