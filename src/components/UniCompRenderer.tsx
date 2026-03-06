@@ -93,7 +93,7 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
 
     // For taper and skew, activate immediately on press (no long-press delay)
-    const immediateTypes: Array<typeof type> = ['taper'];
+    const immediateTypes: Array<typeof type> = ['taper', 'skew'];
     const isImmediate = immediateTypes.includes(type);
 
     const activate = () => {
