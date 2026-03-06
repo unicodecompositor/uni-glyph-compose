@@ -324,26 +324,35 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
         }
       }
     } else if (isEditing === 'taper') {
-      // Trapezoid: radial vector from selection center to cursor
-      // The half toward cursor expands, the opposite half narrows
+      // Isosceles trapezoid: direction from center to finger = expansion side
+      // Distance from center = force of expansion
+      // The figure does NOT rotate — only the distortion field orientation changes
       if (rotationCenterRef.current) {
         const { x: cx, y: cy } = rotationCenterRef.current;
         const rdx = clientX - cx;
         const rdy = clientY - cy;
         const dist = Math.sqrt(rdx * rdx + rdy * rdy);
-        if (dist > 5) {
+        if (dist > 3) {
+          // Angle in degrees: direction of expansion (where the finger points)
           const angle = Math.round(Math.atan2(rdy, rdx) * 180 / Math.PI);
-          const force = Math.round(dist / 3);
+          // Force: proportional to distance from center, capped
+          // Use a smooth curve so small movements = subtle, large = strong
+          const force = Math.min(200, Math.round(Math.pow(dist / 2, 1.2)));
           selectionSet.forEach(idx => {
             const sym = newSpec.symbols[idx];
             if (!sym) return;
-            const origSym = initialSpec.symbols[idx];
-            const baseForce = origSym?.st?.force || 0;
-            sym.st = {
-              angle: angle,
-              force: Math.min(200, force + baseForce),
-            };
+            sym.st = { angle, force };
           });
+          // Store current taper direction for visual feedback
+          taperDirectionRef.current = { angle, force, cx, cy, clientX, clientY };
+        } else {
+          // Near center = reset trapezoid
+          selectionSet.forEach(idx => {
+            const sym = newSpec.symbols[idx];
+            if (!sym) return;
+            sym.st = undefined;
+          });
+          taperDirectionRef.current = null;
         }
       }
     }
