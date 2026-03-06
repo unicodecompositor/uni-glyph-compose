@@ -57,6 +57,7 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
   const rotationCenterRef = useRef<{ x: number, y: number } | null>(null);
   const initialCellSizeRef = useRef<number>(0);
   const tapTimesRef = useRef<number[]>([]);
+  const taperDirectionRef = useRef<{ angle: number; force: number; cx: number; cy: number; clientX: number; clientY: number } | null>(null);
 
   const gridWidth = spec?.gridWidth || spec?.gridSize || 10;
   const gridHeight = spec?.gridHeight || spec?.gridSize || 10;
@@ -91,7 +92,11 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
 
-    longPressTimer.current = setTimeout(() => {
+    // For taper and skew, activate immediately on press (no long-press delay)
+    const immediateTypes: Array<typeof type> = ['taper', 'skew'];
+    const isImmediate = immediateTypes.includes(type);
+
+    const activate = () => {
       setIsLongPressActive(true);
       setIsEditing(type);
       setEditStartPos({ x: clientX, y: clientY });
@@ -105,7 +110,13 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
         initialAngleRef.current = Math.atan2(clientY - cy, clientX - cx);
       }
       document.body.classList.add('dragging-active');
-    }, 1000);
+    };
+
+    if (isImmediate) {
+      activate();
+    } else {
+      longPressTimer.current = setTimeout(activate, 1000);
+    }
   };
 
   const handleMouseMove = useCallback((e: MouseEvent | TouchEvent) => {
@@ -314,26 +325,35 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
         }
       }
     } else if (isEditing === 'taper') {
-      // Trapezoid: radial vector from selection center to cursor
-      // The half toward cursor expands, the opposite half narrows
+      // Isosceles trapezoid: direction from center to finger = expansion side
+      // Distance from center = force of expansion
+      // The figure does NOT rotate — only the distortion field orientation changes
       if (rotationCenterRef.current) {
         const { x: cx, y: cy } = rotationCenterRef.current;
         const rdx = clientX - cx;
         const rdy = clientY - cy;
         const dist = Math.sqrt(rdx * rdx + rdy * rdy);
-        if (dist > 5) {
+        if (dist > 3) {
+          // Angle in degrees: direction of expansion (where the finger points)
           const angle = Math.round(Math.atan2(rdy, rdx) * 180 / Math.PI);
-          const force = Math.round(dist / 3);
+          // Force: proportional to distance from center, capped
+          // Use a smooth curve so small movements = subtle, large = strong
+          const force = Math.min(200, Math.round(Math.pow(dist / 2, 1.2)));
           selectionSet.forEach(idx => {
             const sym = newSpec.symbols[idx];
             if (!sym) return;
-            const origSym = initialSpec.symbols[idx];
-            const baseForce = origSym?.st?.force || 0;
-            sym.st = {
-              angle: angle,
-              force: Math.min(200, force + baseForce),
-            };
+            sym.st = { angle, force };
           });
+          // Store current taper direction for visual feedback
+          taperDirectionRef.current = { angle, force, cx, cy, clientX, clientY };
+        } else {
+          // Near center = reset trapezoid
+          selectionSet.forEach(idx => {
+            const sym = newSpec.symbols[idx];
+            if (!sym) return;
+            sym.st = undefined;
+          });
+          taperDirectionRef.current = null;
         }
       }
     }
@@ -352,6 +372,7 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
     setIsLongPressActive(false);
     initialAngleRef.current = null;
     rotationCenterRef.current = null;
+    taperDirectionRef.current = null;
     document.body.classList.remove('dragging-active');
   }, [isEditing, spec, onUpdateCode]);
 
@@ -568,6 +589,44 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
           </div>
         </div>
       )}
+
+      {/* Taper direction visual indicator */}
+      {isEditing === 'taper' && taperDirectionRef.current && selectionBounds && canvasRef.current && (() => {
+        const canvasRect = canvasRef.current!.getBoundingClientRect();
+        const centerX = selectionBounds.x + selectionBounds.width / 2;
+        const centerY = selectionBounds.y + selectionBounds.height / 2;
+        const td = taperDirectionRef.current!;
+        const rad = td.angle * Math.PI / 180;
+        const lineLen = Math.min(td.force * 0.8, Math.max(selectionBounds.width, selectionBounds.height));
+        const endX = centerX + Math.cos(rad) * lineLen;
+        const endY = centerY + Math.sin(rad) * lineLen;
+        // Perpendicular direction for trapezoid shape indicator
+        const perpRad = rad + Math.PI / 2;
+        const halfW = selectionBounds.width / 2;
+        const halfH = selectionBounds.height / 2;
+        const expansion = Math.min(1, td.force / 100);
+        // Wide side (toward finger)
+        const wideHalf = Math.max(halfW, halfH) * (1 + expansion * 0.5);
+        // Narrow side (opposite)
+        const narrowHalf = Math.max(halfW, halfH) * (1 - expansion * 0.3);
+        return (
+          <svg className="absolute inset-0 pointer-events-none z-20" width={canvasWidth} height={canvasHeight}>
+            {/* Direction line from center to finger */}
+            <line
+              x1={centerX} y1={centerY} x2={endX} y2={endY}
+              stroke="hsl(280, 70%, 55%)" strokeWidth="2" strokeDasharray="4 3" opacity="0.8"
+            />
+            {/* Center dot */}
+            <circle cx={centerX} cy={centerY} r="4" fill="hsl(280, 70%, 55%)" opacity="0.9" />
+            {/* Arrow tip */}
+            <circle cx={endX} cy={endY} r="3" fill="hsl(50, 90%, 50%)" opacity="0.9" />
+            {/* Force label */}
+            <text x={endX + 10} y={endY - 10} fill="white" fontSize="11" fontFamily="monospace" opacity="0.8">
+              st: {td.angle}° f={td.force}
+            </text>
+          </svg>
+        );
+      })()}
 
       {hoveredCell !== null && !isEditing && (
         <div className="absolute bottom-2 right-2 bg-card/90 backdrop-blur px-2 py-1 rounded text-xs font-mono text-primary pointer-events-none">
