@@ -91,7 +91,11 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
 
-    longPressTimer.current = setTimeout(() => {
+    // For taper and skew, activate immediately on press (no long-press delay)
+    const immediateTypes: Array<typeof type> = ['taper', 'skew'];
+    const isImmediate = immediateTypes.includes(type);
+
+    const activate = () => {
       setIsLongPressActive(true);
       setIsEditing(type);
       setEditStartPos({ x: clientX, y: clientY });
@@ -105,7 +109,13 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
         initialAngleRef.current = Math.atan2(clientY - cy, clientX - cx);
       }
       document.body.classList.add('dragging-active');
-    }, 1000);
+    };
+
+    if (isImmediate) {
+      activate();
+    } else {
+      longPressTimer.current = setTimeout(activate, 1000);
+    }
   };
 
   const handleMouseMove = useCallback((e: MouseEvent | TouchEvent) => {
