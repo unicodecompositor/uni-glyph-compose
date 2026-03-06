@@ -57,6 +57,7 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
   const rotationCenterRef = useRef<{ x: number, y: number } | null>(null);
   const initialCellSizeRef = useRef<number>(0);
   const tapTimesRef = useRef<number[]>([]);
+  const taperDirectionRef = useRef<{ angle: number; force: number; cx: number; cy: number; clientX: number; clientY: number } | null>(null);
 
   const gridWidth = spec?.gridWidth || spec?.gridSize || 10;
   const gridHeight = spec?.gridHeight || spec?.gridSize || 10;
