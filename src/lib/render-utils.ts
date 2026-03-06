@@ -32,13 +32,9 @@ export function applyParallelogram(
 
 /**
  * Draw with isosceles trapezoid (st) distortion in any direction.
- * angle = expansion direction (degrees), force = intensity (0-200).
+ * angle = expansion direction, force = intensity.
  *
- * The symbol is NOT rotated. We slice the source image into strips
- * perpendicular to the expansion direction, scaling each strip's
- * "width" (perpendicular extent) based on its position along the
- * expansion axis. Strips near the finger side are wider, opposite
- * side narrower.
+ * The symbol itself is not rotated — only the distortion field direction changes.
  */
 export function drawTrapezoidal(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -50,6 +46,7 @@ export function drawTrapezoidal(
   const sourceH = source.height;
   if (!sourceW || !sourceH || w <= 0 || h <= 0) return;
 
+  // 0..200 (editor) -> 0..2 distortion range
   const intensity = Math.max(-2, Math.min(2, st.force / 100));
   if (Math.abs(intensity) < 0.001) {
     ctx.drawImage(source, x, y, w, h);
@@ -57,68 +54,37 @@ export function drawTrapezoidal(
   }
 
   const rad = st.angle * Math.PI / 180;
-  // Unit vectors: d = expansion direction, p = perpendicular
-  const dx = Math.cos(rad);
-  const dy = Math.sin(rad);
-  const px = -dy; // perpendicular
-  const py = dx;
+  const steps = Math.max(32, Math.round(Math.max(w, h) / 2));
 
+  // Work in local space centered on the symbol.
+  // X axis points to expansion direction, Y axis is the "width" to stretch/compress.
   const cx = x + w / 2;
   const cy = y + h / 2;
 
-  const steps = Math.max(40, Math.round(Math.max(w, h) / 2));
-
   ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rad);
 
   for (let i = 0; i < steps; i++) {
     const t0 = i / steps;
     const t1 = (i + 1) / steps;
 
-    // Source rectangle for this strip (in source pixel coords)
+    const stripX = -w / 2 + t0 * w;
+    const stripW = (t1 - t0) * w;
     const sx = t0 * sourceW;
     const sw = (t1 - t0) * sourceW;
-    const sy = 0;
-    const sh = sourceH;
-    if (sw <= 0) continue;
 
-    // Position along expansion axis: -1 (opposite side) to +1 (finger side)
-    const tMid = (t0 + t1) / 2;
+    if (sw <= 0 || stripW <= 0) continue;
 
-    // Project the strip center onto the expansion axis to get signed distance
-    // Strip center in destination space
-    const stripCx = x + tMid * w;
-    const stripCy = y + tMid * h;
+    // -1..1 along expansion axis: opposite side narrows, finger side expands
+    const centerNorm = (stripX + stripW / 2) / (w / 2);
+    const spread = 1 + centerNorm * intensity;
+    const stripH = h * Math.max(0.02, spread);
+    const stripY = -stripH / 2;
 
-    // Wait — we need to think differently. We slice the image into
-    // vertical strips in SOURCE space. Each strip maps to a column
-    // in the destination. The "perpendicular scaling" for each column
-    // depends on how far along the expansion direction that column is.
-
-    // Column center in dest space (before distortion)
-    const colCx = x + tMid * w;
-    const colCy = y + h / 2;
-
-    // Signed projection of (colC - center) onto expansion direction
-    const relX = colCx - cx;
-    const relY = colCy - cy;
-    const projD = relX * dx + relY * dy;
-    // Normalize by half-diagonal
-    const halfExtent = Math.abs(w / 2 * dx) + Math.abs(h / 2 * dy);
-    const normProj = halfExtent > 0 ? projD / halfExtent : 0;
-
-    // Scale perpendicular extent: +1 at finger side, -1 at opposite
-    const spread = 1 + normProj * intensity;
-    const clampedSpread = Math.max(0.02, spread);
-
-    // The strip occupies a vertical column of the destination
-    const destX = x + t0 * w;
-    const destW = (t1 - t0) * w + 0.5; // tiny overlap to prevent seams
-
-    // Scale height around center
-    const destH = h * clampedSpread;
-    const destY = cy - destH / 2;
-
-    ctx.drawImage(source, sx, sy, sw, sh, destX, destY, destW, destH);
+    // Tiny overlap prevents visible seams between strips
+    const drawW = stripW + 0.5;
+    ctx.drawImage(source, sx, 0, sw, sourceH, stripX, stripY, drawW, stripH);
   }
 
   ctx.restore();
