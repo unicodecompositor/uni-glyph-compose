@@ -83,10 +83,10 @@ export function applyParallelogram(
 
 /**
  * Draw with isosceles trapezoid (st) distortion in any direction.
- * Uses vertex-based applyRadialTaper logic:
- * - Compute 4 transformed corners of the quad
- * - Render source image as horizontal scanline strips mapped to the quad
- * - The image itself does NOT rotate — only its boundary deforms
+ * Pure vertex-based: NO ctx.rotate, NO ctx.transform.
+ * Each horizontal strip's 4 corners are deformed via applyVertexDeformation,
+ * then drawn as an axis-aligned rect using averaged coordinates.
+ * The image content does NOT rotate — only the shape deforms.
  */
 export function drawTrapezoidal(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -106,48 +106,47 @@ export function drawTrapezoidal(
   const cx = x + w / 2;
   const cy = y + h / 2;
 
-  // Original 4 corners: TL, TR, BR, BL
-  const corners: Vertex[] = [
-    { x: x, y: y },
-    { x: x + w, y: y },
-    { x: x + w, y: y + h },
-    { x: x, y: y + h },
-  ];
-
-  // Apply vertex deformation
-  const [TL, TR, BR, BL] = applyVertexDeformation(corners, cx, cy, st.angle, st.force, 'st');
-
-  // Render as horizontal scanline strips
-  const steps = Math.max(40, Math.round(Math.max(w, h)));
+  // Use a grid of strips for better approximation at diagonal angles
+  const stepsY = Math.max(20, Math.round(h / 3));
+  const stepsX = Math.max(20, Math.round(w / 3));
 
   ctx.save();
-  for (let i = 0; i < steps; i++) {
-    const t0 = i / steps;
-    const t1 = (i + 1) / steps;
-    const tMid = (t0 + t1) / 2;
+  for (let row = 0; row < stepsY; row++) {
+    for (let col = 0; col < stepsX; col++) {
+      const t0y = row / stepsY;
+      const t1y = (row + 1) / stepsY;
+      const t0x = col / stepsX;
+      const t1x = (col + 1) / stepsX;
 
-    // Left edge at this scanline: lerp TL -> BL
-    const lx = TL.x + (BL.x - TL.x) * tMid;
-    const ly = TL.y + (BL.y - TL.y) * tMid;
+      // 4 corners of this cell in original space
+      const cellCorners: Vertex[] = [
+        { x: x + t0x * w, y: y + t0y * h }, // TL
+        { x: x + t1x * w, y: y + t0y * h }, // TR
+        { x: x + t1x * w, y: y + t1y * h }, // BR
+        { x: x + t0x * w, y: y + t1y * h }, // BL
+      ];
 
-    // Right edge at this scanline: lerp TR -> BR
-    const rx = TR.x + (BR.x - TR.x) * tMid;
-    const ry = TR.y + (BR.y - TR.y) * tMid;
+      // Deform corners
+      const [dTL, dTR, dBR, dBL] = applyVertexDeformation(cellCorners, cx, cy, st.angle, st.force, 'st');
 
-    // Source strip
-    const sy = t0 * sourceH;
-    const sh = Math.max(1, (t1 - t0) * sourceH);
+      // Average to axis-aligned rect (no rotation!)
+      const destLeft = (dTL.x + dBL.x) / 2;
+      const destRight = (dTR.x + dBR.x) / 2;
+      const destTop = (dTL.y + dTR.y) / 2;
+      const destBottom = (dBL.y + dBR.y) / 2;
 
-    // Destination strip width and angle
-    const destW = Math.sqrt((rx - lx) ** 2 + (ry - ly) ** 2);
-    const stripAngle = Math.atan2(ry - ly, rx - lx);
-    const destH = h / steps + 0.5; // tiny overlap to avoid seams
+      const destW = destRight - destLeft;
+      const destH = destBottom - destTop;
+      if (destW <= 0 || destH <= 0) continue;
 
-    ctx.save();
-    ctx.translate(lx, ly);
-    ctx.rotate(stripAngle);
-    ctx.drawImage(source, 0, sy, sourceW, sh, 0, -0.25, destW, destH);
-    ctx.restore();
+      // Source rect
+      const sx = t0x * sourceW;
+      const sy = t0y * sourceH;
+      const sw = (t1x - t0x) * sourceW;
+      const sh = (t1y - t0y) * sourceH;
+
+      ctx.drawImage(source, sx, sy, sw, sh, destLeft, destTop, destW + 0.5, destH + 0.5);
+    }
   }
   ctx.restore();
 }
