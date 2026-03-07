@@ -338,7 +338,7 @@ export const UniCompRenderer: React.FC<UniCompRendererProps> = ({
           const angle = Math.round(Math.atan2(rdy, rdx) * 180 / Math.PI);
           // Force: proportional to distance from center, capped
           // Use a smooth curve so small movements = subtle, large = strong
-          const force = Math.min(200, Math.round(Math.pow(dist / 2, 1.2)));
+          const force = Math.min(200, Math.round(Math.pow(dist / 6, 1.1)));
           selectionSet.forEach(idx => {
             const sym = newSpec.symbols[idx];
             if (!sym) return;
