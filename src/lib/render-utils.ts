@@ -14,9 +14,60 @@ export function resolveColor(color: string | undefined, fallback: string): strin
 }
 
 /**
+ * Shared vertex-based deformation for both trapezoid (st) and parallelogram (sp).
+ * Computes 4 transformed corners from a rectangle using angle+force.
+ *
+ * Trapezoid (st): vertices spread PERPENDICULAR to the swipe direction.
+ *   Vertices "ahead" of the swipe expand sideways, those "behind" contract.
+ *
+ * Parallelogram (sp): vertices shift ALONG the swipe direction.
+ *   Vertices "ahead" push further forward, those "behind" push backward.
+ */
+interface Vertex { x: number; y: number }
+
+function applyVertexDeformation(
+  corners: Vertex[],
+  centerX: number, centerY: number,
+  angle: number, force: number,
+  mode: 'st' | 'sp',
+): Vertex[] {
+  const rad = angle * Math.PI / 180;
+  const dirX = Math.cos(rad);
+  const dirY = Math.sin(rad);
+  const perpX = -dirY;
+  const perpY = dirX;
+
+  return corners.map(v => {
+    const rx = v.x - centerX;
+    const ry = v.y - centerY;
+
+    // How far this vertex is along the swipe direction
+    const dAlong = rx * dirX + ry * dirY;
+    // How far this vertex is sideways from the swipe axis
+    const dSide = rx * perpX + ry * perpY;
+
+    const spread = dAlong * force * 0.005;
+
+    if (mode === 'st') {
+      // Trapezoid: scale the perpendicular displacement
+      const scaleAtPoint = 1.0 + spread;
+      return {
+        x: centerX + (dirX * dAlong) + (perpX * dSide * scaleAtPoint),
+        y: centerY + (dirY * dAlong) + (perpY * dSide * scaleAtPoint),
+      };
+    } else {
+      // Parallelogram: shift along the swipe direction
+      return {
+        x: v.x + dirX * spread,
+        y: v.y + dirY * spread,
+      };
+    }
+  });
+}
+
+/**
  * Apply parallelogram (sp) transform to canvas context.
- * Uses angle+force to compute a shear matrix.
- * angle = direction of shear in degrees, force = intensity
+ * Uses vertex deformation: shifts vertices along swipe direction.
  */
 export function applyParallelogram(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -32,13 +83,10 @@ export function applyParallelogram(
 
 /**
  * Draw with isosceles trapezoid (st) distortion in any direction.
- * angle = expansion direction (degrees), force = intensity (0-200).
- *
- * The symbol is NOT rotated. We slice the source image into strips
- * perpendicular to the expansion direction, scaling each strip's
- * "width" (perpendicular extent) based on its position along the
- * expansion axis. Strips near the finger side are wider, opposite
- * side narrower.
+ * Uses vertex-based applyRadialTaper logic:
+ * - Compute 4 transformed corners of the quad
+ * - Render source image as horizontal scanline strips mapped to the quad
+ * - The image itself does NOT rotate — only its boundary deforms
  */
 export function drawTrapezoidal(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -50,77 +98,57 @@ export function drawTrapezoidal(
   const sourceH = source.height;
   if (!sourceW || !sourceH || w <= 0 || h <= 0) return;
 
-  const intensity = Math.max(-2, Math.min(2, st.force / 100));
-  if (Math.abs(intensity) < 0.001) {
+  if (Math.abs(st.force) < 0.5) {
     ctx.drawImage(source, x, y, w, h);
     return;
   }
 
-  const rad = st.angle * Math.PI / 180;
-  // Unit vectors: d = expansion direction, p = perpendicular
-  const dx = Math.cos(rad);
-  const dy = Math.sin(rad);
-  const px = -dy; // perpendicular
-  const py = dx;
-
   const cx = x + w / 2;
   const cy = y + h / 2;
 
-  const steps = Math.max(40, Math.round(Math.max(w, h) / 2));
+  // Original 4 corners: TL, TR, BR, BL
+  const corners: Vertex[] = [
+    { x: x, y: y },
+    { x: x + w, y: y },
+    { x: x + w, y: y + h },
+    { x: x, y: y + h },
+  ];
+
+  // Apply vertex deformation
+  const [TL, TR, BR, BL] = applyVertexDeformation(corners, cx, cy, st.angle, st.force, 'st');
+
+  // Render as horizontal scanline strips
+  const steps = Math.max(40, Math.round(Math.max(w, h)));
 
   ctx.save();
-
   for (let i = 0; i < steps; i++) {
     const t0 = i / steps;
     const t1 = (i + 1) / steps;
-
-    // Source rectangle for this strip (in source pixel coords)
-    const sx = t0 * sourceW;
-    const sw = (t1 - t0) * sourceW;
-    const sy = 0;
-    const sh = sourceH;
-    if (sw <= 0) continue;
-
-    // Position along expansion axis: -1 (opposite side) to +1 (finger side)
     const tMid = (t0 + t1) / 2;
 
-    // Project the strip center onto the expansion axis to get signed distance
-    // Strip center in destination space
-    const stripCx = x + tMid * w;
-    const stripCy = y + tMid * h;
+    // Left edge at this scanline: lerp TL -> BL
+    const lx = TL.x + (BL.x - TL.x) * tMid;
+    const ly = TL.y + (BL.y - TL.y) * tMid;
 
-    // Wait — we need to think differently. We slice the image into
-    // vertical strips in SOURCE space. Each strip maps to a column
-    // in the destination. The "perpendicular scaling" for each column
-    // depends on how far along the expansion direction that column is.
+    // Right edge at this scanline: lerp TR -> BR
+    const rx = TR.x + (BR.x - TR.x) * tMid;
+    const ry = TR.y + (BR.y - TR.y) * tMid;
 
-    // Column center in dest space (before distortion)
-    const colCx = x + tMid * w;
-    const colCy = y + h / 2;
+    // Source strip
+    const sy = t0 * sourceH;
+    const sh = Math.max(1, (t1 - t0) * sourceH);
 
-    // Signed projection of (colC - center) onto expansion direction
-    const relX = colCx - cx;
-    const relY = colCy - cy;
-    const projD = relX * dx + relY * dy;
-    // Normalize by half-diagonal
-    const halfExtent = Math.abs(w / 2 * dx) + Math.abs(h / 2 * dy);
-    const normProj = halfExtent > 0 ? projD / halfExtent : 0;
+    // Destination strip width and angle
+    const destW = Math.sqrt((rx - lx) ** 2 + (ry - ly) ** 2);
+    const stripAngle = Math.atan2(ry - ly, rx - lx);
+    const destH = h / steps + 0.5; // tiny overlap to avoid seams
 
-    // Scale perpendicular extent: +1 at finger side, -1 at opposite
-    const spread = 1 + normProj * intensity;
-    const clampedSpread = Math.max(0.02, spread);
-
-    // The strip occupies a vertical column of the destination
-    const destX = x + t0 * w;
-    const destW = (t1 - t0) * w + 0.5; // tiny overlap to prevent seams
-
-    // Scale height around center
-    const destH = h * clampedSpread;
-    const destY = cy - destH / 2;
-
-    ctx.drawImage(source, sx, sy, sw, sh, destX, destY, destW, destH);
+    ctx.save();
+    ctx.translate(lx, ly);
+    ctx.rotate(stripAngle);
+    ctx.drawImage(source, 0, sy, sourceW, sh, 0, -0.25, destW, destH);
+    ctx.restore();
   }
-
   ctx.restore();
 }
 
