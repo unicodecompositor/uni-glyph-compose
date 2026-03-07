@@ -46,7 +46,7 @@ function applyVertexDeformation(
     // How far this vertex is sideways from the swipe axis
     const dSide = rx * perpX + ry * perpY;
 
-    const spread = dAlong * force * 0.005;
+    const spread = dAlong * force * 0.0008;
 
     if (mode === 'st') {
       // Trapezoid: scale the perpendicular displacement
