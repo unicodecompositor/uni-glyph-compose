@@ -50,7 +50,8 @@ function applyVertexDeformation(
 
     if (mode === 'st') {
       // Trapezoid: scale the perpendicular displacement
-      const scaleAtPoint = 1.0 + spread;
+      // Clamp to [0.05, ...] — never invert, just converge toward center axis
+      const scaleAtPoint = Math.max(0.05, 1.0 + spread);
       return {
         x: centerX + (dirX * dAlong) + (perpX * dSide * scaleAtPoint),
         y: centerY + (dirY * dAlong) + (perpY * dSide * scaleAtPoint),
